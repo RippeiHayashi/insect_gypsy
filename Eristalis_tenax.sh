@@ -233,3 +233,47 @@ done
 ### step 6-4: tile_analysis_plots.R was used to make scatter plots
 
 ### post-processing of the tile coverage data for small RNA libraries --- END ---
+
+
+### for revision --- START ---
+### measure proportions of sense and antisense gypsy piRNAs and ovarian somatic cluster piRNAs out of total genome mappers
+### step 7: run bowtie to map reads to the genome, allowing up to 1MM, all mappers with --all --best --strata option
+### genome all mappers
+index_genome="${references}/${SPECIES}/indices/Eten_idEriTena2.2"
+bowtie -p 12 -f -v 1 --all --best --strata -S ${index_genome} ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.fa |\
+samtools view -bS - | bamToBed -i - | sort --parallel=12 -k1,1 -k2,2n > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.bed
+
+### making a fasta file using genome all mappers and mapping information
+awk '{READS[$4]++} END {split($4,a,"@"); {for(var in READS) print var,READS[var]}
+}' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.bed |\
+awk '{split($1,a,"@"); if(length(a[1])>22) print ">"$1"@"$2"\n"a[1]}' > ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.mappings.fa
+
+### genome all mappers using the mapping information
+index_genome="${references}/${SPECIES}/indices/Eten_idEriTena2.2"
+bowtie -p 12 -f -v 1 --all --best --strata -S ${index_genome} ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.mappings.fa |\
+samtools view -@ 12 -bS - | bamToBed -i - | sort --parallel 12 -k1,1 -k2,2n > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.mappings.bed
+
+### step 7-1: measure piRNA mappers intersecting with respective genomic regions. 
+TOTAL=`(awk '!seen[$4]++' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.mappings.bed | awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]} END {print count}' )`
+
+TOTAL_Gypsy_S=`(bedtools intersect -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.mappings.bed \
+-b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+TOTAL_Gypsy_AS=`(bedtools intersect -S -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.mappings.bed \
+-b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+Cluster=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.mappings.bed -b ${references}/${SPECIES}/Eten_idEriTena2_piRNA-clusters.bed |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}' )`
+
+Cluster_Gypsy_S=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.mappings.bed -b ${references}/${SPECIES}/Eten_idEriTena2_piRNA-clusters.bed |\
+bedtools intersect -s -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+Cluster_Gypsy_AS=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Eten_idEriTena2.2.mappings.bed -b ${references}/${SPECIES}/Eten_idEriTena2_piRNA-clusters.bed |\
+bedtools intersect -S -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+printf "total_genome_mappers "$TOTAL" "${lib_sRNA}"\n""total_Gypsy_S "$TOTAL_Gypsy_S" "${lib_sRNA}"\n""total_Gypsy_AS "$TOTAL_Gypsy_AS" "${lib_sRNA}"\n""cluster_mappers "$Cluster" "${lib_sRNA}"\n""cluster_Gypsy_S "$Cluster_Gypsy_S" "${lib_sRNA}"\n""cluster_Gypsy_AS "$Cluster_Gypsy_AS" "${lib_sRNA}"\n" > ${analysis}/${lib_sRNA}/${lib_sRNA}_piRNAs_stats.txt
+### for revision --- END ---
