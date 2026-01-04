@@ -104,6 +104,16 @@ sort -k1,1 -k2,2n | tr ' ' '\t' > ${references}/${SPECIES}/${ASSEMBLY}_genomic.f
 cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out | grep -i "gypsy" |\
 awk '{if($9=="C") print $5,$6,$7,$5":"$6":"$10":"$11,$2":"$3":"$4,"-"}' |\
 sort -k1,1 -k2,2n | tr ' ' '\t' > ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.minus.bed
+cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed | sort -k1,1 -k2,2n > ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed
+
+### extract sense and antisense BEL insertions.
+cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out | grep -i "BEL" |\
+awk '{if($9=="+" ) print $5,$6,$7,$5":"$6":"$10":"$11,$2":"$3":"$4,$9}' |\
+sort -k1,1 -k2,2n | tr ' ' '\t' > ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.plus.bed
+cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out | grep -i "BEL" |\
+awk '{if($9=="C") print $5,$6,$7,$5":"$6":"$10":"$11,$2":"$3":"$4,"-"}' |\
+sort -k1,1 -k2,2n | tr ' ' '\t' > ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.minus.bed
+cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.*.bed | sort -k1,1 -k2,2n > ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed
 
 ### extract all transposon insertions
 ### remove "Simple_repeat", "Low_complexity", "rRNA" and "tRNA"
@@ -251,7 +261,7 @@ TOTAL=`(awk '!seen[$4]++' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mapp
 awk -v TOTAL=${TOTAL} -v LIB=${lib_sRNA} '{split($4,a,"@"); if(length(a[1])>22) VIRUS[$1"@p@"$6]+=a[2]
 } END {for(var in VIRUS) print var,LIB,VIRUS[var]/TOTAL*1000000
 }' ${analysis}/${lib_sRNA}/${lib_sRNA}_mosquito-viruses.Russo.mappers_3MMs.bed > ${analysis}/${lib_sRNA}/${lib_sRNA}_mosquito-viruses.Russo.mappers_3MMs.counts
-
+### values in this table were used to generate the heatmap in Figure 2F. See also measure_viral_sRNAs.R
 
 ### step 7: measuring nucleotide frequencies around 3' ends of piRNAs mapping to Van Rij clusters in Aedes ovary sRNAseq reads
 ### details of ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed are found in the next block.
@@ -346,3 +356,144 @@ done
 ### step 9-3: tile_analysis_plots.R was used to make scatter plots
 
 ### post-processing of the tile coverage data for small RNA libraries --- END ---
+
+
+### for revision --- START ---
+### measure proportions of sense and antisense gypsy piRNAs and ovarian somatic cluster piRNAs out of total genome mappers
+### step 10: run bowtie to map reads to the genome, allowing up to 1MM, all mappers with --all --best --strata option
+### genome all mappers
+index_genome="${references}/${SPECIES}/indices/AaegL5.0"
+bowtie -p 12 -f -v 1 --all --best --strata -S ${index_genome} ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.fa |\
+samtools view -bS - | bamToBed -i - | sort --parallel=12 -k1,1 -k2,2n > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.bed
+
+### making a fasta file using genome all mappers and mapping information
+awk '{READS[$4]++} END {split($4,a,"@"); {for(var in READS) print var,READS[var]}
+}' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.bed |\
+awk '{split($1,a,"@"); if(length(a[1])>22) print ">"$1"@"$2"\n"a[1]}' > ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.mappings.fa
+
+### genome all mappers using the mapping information
+index_genome="${references}/${SPECIES}/indices/AaegL5.0"
+bowtie -p 12 -f -v 1 --all --best --strata -S ${index_genome} ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.mappings.fa |\
+samtools view -@ 12 -bS - | bamToBed -i - | sort --parallel 12 -k1,1 -k2,2n > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed
+
+### step 10-1: measure piRNA mappers intersecting with respective genomic regions. 
+TOTAL=`(awk '!seen[$4]++' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed | awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]} END {print count}' )`
+
+TOTAL_Gypsy_S=`(bedtools intersect -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed \
+-b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+TOTAL_Gypsy_AS=`(bedtools intersect -S -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed \
+-b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+Cluster=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}' )`
+
+Cluster_Gypsy_S=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -s -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+Cluster_Gypsy_AS=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -S -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+printf "total_genome_mappers "$TOTAL" "${lib_sRNA}"\n""total_Gypsy_S "$TOTAL_Gypsy_S" "${lib_sRNA}"\n""total_Gypsy_AS "$TOTAL_Gypsy_AS" "${lib_sRNA}"\n""cluster_mappers "$Cluster" "${lib_sRNA}"\n""cluster_Gypsy_S "$Cluster_Gypsy_S" "${lib_sRNA}"\n""cluster_Gypsy_AS "$Cluster_Gypsy_AS" "${lib_sRNA}"\n" > ${analysis}/${lib_sRNA}/${lib_sRNA}_piRNAs_stats.txt
+
+
+### step 11: measure fractions of BEL and Gypsy and nrEVE insertions (also known as NIRVS) in VanRij piRNA cluster for Figure 2.
+### In this example, gypsy insertions that intersect VanRij piRNA clusters but not BEL nor nrERV insertions are taken.
+### The rest follows the same logic.
+bedtools intersect -S -a ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -wo -a - -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools subtract -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed ${references}/${SPECIES}/NIRVS_Aaeg.bed) |\
+awk '{CLUSTER[$10]+=$3-$2} END {for(var in CLUSTER) print var,CLUSTER[var],"Gypsy_AS"}' > ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+bedtools intersect -s -a ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -wo -a - -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools subtract -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed ${references}/${SPECIES}/NIRVS_Aaeg.bed) |\
+awk '{CLUSTER[$10]+=$3-$2} END {for(var in CLUSTER) print var,CLUSTER[var],"Gypsy_S"}' >> ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+bedtools intersect -S -a ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -wo -a - -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools subtract -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed ${references}/${SPECIES}/NIRVS_Aaeg.bed) |\
+awk '{CLUSTER[$10]+=$3-$2} END {for(var in CLUSTER) print var,CLUSTER[var],"BEL_AS"}' >> ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+bedtools intersect -s -a ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -wo -a - -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools subtract -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed ${references}/${SPECIES}/NIRVS_Aaeg.bed) |\
+awk '{CLUSTER[$10]+=$3-$2} END {for(var in CLUSTER) print var,CLUSTER[var],"BEL_S"}' >> ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+bedtools intersect -s -a ${references}/${SPECIES}/NIRVS_Aaeg.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -wo -a - -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools subtract -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed) |\
+awk '{CLUSTER[$10]+=$3-$2} END {for(var in CLUSTER) print var,CLUSTER[var],"NIRVS_S"}' >> ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+bedtools intersect -S -a ${references}/${SPECIES}/NIRVS_Aaeg.bed -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools intersect -wo -a - -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+bedtools subtract -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed) |\
+awk '{CLUSTER[$10]+=$3-$2} END {for(var in CLUSTER) print var,CLUSTER[var],"NIRVS_AS"}' >> ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+bedtools intersect -wo -a <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.all.bed ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.BEL.all.bed ${references}/${SPECIES}/NIRVS_Aaeg.bed) -b ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed |\
+awk '{CLUSTER[$10]+=$13} END {for(var in CLUSTER) print var,CLUSTER[var],"ALL"}' >> ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+awk '{print $4,$3-$2,"SIZE"}' ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed >> ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+
+SIZE=`(awk '{if($3=="SIZE") count+=$2} END {print count}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt)`
+awk -v SIZE=${SIZE} '{if($3=="Gypsy_AS") Gypsy_AS+=$2} END {print Gypsy_AS/SIZE}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+0.319195
+awk -v SIZE=${SIZE} '{if($3=="Gypsy_S") Gypsy_S+=$2} END {print Gypsy_S/SIZE}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+0.00439504
+awk -v SIZE=${SIZE} '{if($3=="BEL_AS") BEL_AS+=$2} END {print BEL_AS/SIZE}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+0.0436892
+awk -v SIZE=${SIZE} '{if($3=="BEL_S") BEL_S+=$2} END {print BEL_S/SIZE}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+0.00981423
+awk -v SIZE=${SIZE} '{if($3=="NIRVS_AS") NIRVS_AS+=$2} END {print NIRVS_AS/SIZE}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+0.050521
+awk -v SIZE=${SIZE} '{if($3=="NIRVS_S") NIRVS_S+=$2} END {print NIRVS_S/SIZE}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+0.00288395
+awk -v SIZE=${SIZE} '{if($3=="ALL") ALL+=$2} END {print ALL/SIZE}' ${references}/Mosquitoes/${ASSEMBLY}_VanRij_Aaeg_piRNA-clusters.Gypsy_BEL_nrEVE.txt
+0.439051
+
+
+### phasing linkage analysis for Figure 6C and C' --- START ---
+### step 12-1: generate pseudo piRNAs per every coordinate of VanRij_Aaeg_piRNA-clusters
+cat ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed | awk '{print $2,$3-$2,$4,$6}' | while read START_position length TE strand; do
+for ((i=0; i<length; i++)); do
+j=$((i+1))
+printf "%s\t%d\t%d\tAAAAAAAAAAAAAAAAAAAAAAA@1\t.\t+\n" "$TE" "$i" "$j"
+printf "%s\t%d\t%d\tAAAAAAAAAAAAAAAAAAAAAAA@1\t.\t-\n" "$TE" "$i" "$j"
+done > "${references}/${SPECIES}/${TE}_pseudo.piRNAs.txt"
+done
+
+### step 12-2: count 5end and 3end of plus and minus mapping reads
+### total number of piRNA genome mappers
+TOTAL=`(awk '!seen[$4]++' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed | awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]} END {print count}' )`
+
+### looping per clusters
+cat ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed | awk '{print $2,$3-$2,$4,$6}' | while read START_position length TE strand; do
+
+### extract reads mapping to the cluster
+bedtools intersect -wa -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.bed \
+-b <(awk -v TE=${TE} '{if($4==TE) print }' ${references}/${SPECIES}/VanRij_Aaeg_piRNA-clusters.bed | tr ' ' '\t' ) |\
+awk -v TE=${TE} -v START=${START_position} '{split($4,a,"@"); print TE,$2-START,$3-START,a[1]"@"a[2]/a[3],$5,$6}' | tr ' ' '\t' > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.${TE}.bed
+
+## count 5end and 3end of plus and minus mapping reads (>22nt)
+cat ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.AaegL5.0.mappings.${TE}.bed ${references}/${SPECIES}/${TE}_pseudo.piRNAs.txt |\
+awk -v TOTAL=${TOTAL} '{split($4,a,"@"); if($6=="+" && length(a[1])>22) {PLUS5[$2]+=a[2]; PLUS3[$3-1]+=a[2]
+} else if($6=="-" && length(a[1])>22) {MINUS5[$3-1]+=a[2]; MINUS3[$2]+=a[2]
+}} END {for(var in PLUS5) print var,(PLUS5[var]-1)/TOTAL*1000000,"plus_5end""\n"var,(PLUS3[var]-1)/TOTAL*1000000,"plus_3end""\n"var,(MINUS5[var]-1)/TOTAL*1000000,"minus_5end""\n"var,(MINUS3[var]-1)/TOTAL*1000000,"minus_3end"
+}' > ${analysis}/${lib_sRNA}/${lib_sRNA}_${TE}_3MM_mappers.counts
+
+DIRECTORY_lib_sRNA="${analysis}/${lib_sRNA}"
+if [[ ${strand} == "-" ]]; then
+### if the cluster is on minus strand
+Rscript ${scripts}/phasing_linkage_minus.R DIRECTORY=${DIRECTORY_lib_sRNA} LIB=${lib_sRNA} TE=${TE}
+else
+### if the cluster is on plus strand
+Rscript ${scripts}/phasing_linkage_plus.R DIRECTORY=${DIRECTORY_lib_sRNA} LIB=${lib_sRNA} TE=${TE}
+fi
+done
+### phasing linkage analysis for Figure 6C and C' --- END ---
+
+### for revision --- END ---
