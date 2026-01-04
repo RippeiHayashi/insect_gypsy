@@ -279,3 +279,109 @@ Rscript ${scripts}/pingpong_cluster.R DIRECTORY=${DIRECTORY} LIB=${lib_sRNA} CHR
 done
 
 ### measuring ping-pong linkage across 0.5kb tiles from the cluster R2_1 --- END ---
+
+
+### for revision --- START ---
+### measure proportions of sense and antisense gypsy piRNAs and ovarian somatic cluster piRNAs out of total genome mappers --- START ---
+### step 8: run bowtie to map reads to the genome, allowing up to 1MM, all mappers with --all --best --strata option
+### genome all mappers
+index_genome="${references}/${SPECIES}/indices/Tcarb.CSA7p2"
+bowtie -p 12 -f -v 1 --all --best --strata -S ${index_genome} ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.fa |\
+samtools view -bS - | bamToBed -i - | sort --parallel=12 -k1,1 -k2,2n > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.bed
+
+### making a fasta file using genome all mappers and mapping information
+awk '{READS[$4]++} END {split($4,a,"@"); {for(var in READS) print var,READS[var]}
+}' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.bed |\
+awk '{split($1,a,"@"); if(length(a[1])>22) print ">"$1"@"$2"\n"a[1]}' > ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.mappings.fa
+
+### genome all mappers using the mapping information
+index_genome="${references}/${SPECIES}/indices/Tcarb.CSA7p2"
+bowtie -p 12 -f -v 1 --all --best --strata -S ${index_genome} ${analysis}/${lib_sRNA}/${lib_sRNA}_collapsed_misc-unmapped.mappings.fa |\
+samtools view -@ 12 -bS - | bamToBed -i - | sort --parallel 12 -k1,1 -k2,2n > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed
+
+### step 8-1: measure piRNA mappers intersecting with respective genomic regions. 
+TOTAL=`(awk '!seen[$4]++' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed | awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]} END {print count}' )`
+
+TOTAL_Gypsy_S=`(bedtools intersect -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed \
+-b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+TOTAL_Gypsy_AS=`(bedtools intersect -S -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed \
+-b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+Cluster=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed -b ${references}/${SPECIES}/Tcarb.CSA7p2_piRNA-clusters.bed |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}' )`
+
+Cluster_Gypsy_S=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed -b ${references}/${SPECIES}/Tcarb.CSA7p2_piRNA-clusters.bed |\
+bedtools intersect -s -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+Cluster_Gypsy_AS=`(bedtools intersect -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed -b ${references}/${SPECIES}/Tcarb.CSA7p2_piRNA-clusters.bed |\
+bedtools intersect -S -a - -b <(cat ${references}/${SPECIES}/${ASSEMBLY}_genomic.fna.out.gypsy.*.bed ${references}/${SPECIES}/tblastn_results/${ASSEMBLY}_${SPECIES}_gypsy_*_tblastn_results.out.high-score.bed) |\
+awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]/a[3]} END {print count}')`
+
+printf "total_genome_mappers "$TOTAL" "${lib_sRNA}"\n""total_Gypsy_S "$TOTAL_Gypsy_S" "${lib_sRNA}"\n""total_Gypsy_AS "$TOTAL_Gypsy_AS" "${lib_sRNA}"\n""cluster_mappers "$Cluster" "${lib_sRNA}"\n""cluster_Gypsy_S "$Cluster_Gypsy_S" "${lib_sRNA}"\n""cluster_Gypsy_AS "$Cluster_Gypsy_AS" "${lib_sRNA}"\n" > ${analysis}/${lib_sRNA}/${lib_sRNA}_piRNAs_stats.txt
+### measure proportions of sense and antisense gypsy piRNAs and ovarian somatic cluster piRNAs out of total genome mappers --- END ---
+
+
+### phasing linkage analysis for Figure 6C and C' --- START ---
+### step 9-1: generate pseudo piRNAs per every coordinate of VanRij_Aaeg_piRNA-clusters
+cat ${references}/${SPECIES}/Tcarb.CSA7p2_piRNA-clusters.bed | awk '{print $2,$3-$2,$4,$6}' | while read START_position length TE strand; do
+for ((i=0; i<length; i++)); do
+j=$((i+1))
+printf "%s\t%d\t%d\tAAAAAAAAAAAAAAAAAAAAAAA@1\t.\t+\n" "$TE" "$i" "$j"
+printf "%s\t%d\t%d\tAAAAAAAAAAAAAAAAAAAAAAA@1\t.\t-\n" "$TE" "$i" "$j"
+done > "${references}/${SPECIES}/${TE}_pseudo.piRNAs.txt"
+done
+
+### step 9-2: count 5end and 3end of plus and minus mapping reads
+### total number of piRNA genome mappers
+TOTAL=`(awk '!seen[$4]++' ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed | awk '{split($4,a,"@"); if(length(a[1])>22) count+=a[2]} END {print count}' )`
+
+### looping per clusters
+cat ${references}/${SPECIES}/Tcarb.CSA7p2_piRNA-clusters.bed | awk '{print $2,$3-$2,$4,$6}' | while read START_position length TE strand; do
+
+### extract reads mapping to the cluster
+bedtools intersect -wa -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.bed \
+-b <(awk -v TE=${TE} '{if($4==TE) print }' ${references}/${SPECIES}/Tcarb.CSA7p2_piRNA-clusters.bed | tr ' ' '\t' ) |\
+awk -v TE=${TE} -v START=${START_position} '{split($4,a,"@"); print TE,$2-START,$3-START,a[1]"@"a[2]/a[3],$5,$6}' | tr ' ' '\t' > ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.${TE}.bed
+
+## count 5end and 3end of plus and minus mapping reads (>22nt)
+cat ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-all-mappers.Tcarb.CSA7p2.mappings.${TE}.bed ${references}/${SPECIES}/${TE}_pseudo.piRNAs.txt |\
+awk -v TOTAL=${TOTAL} '{split($4,a,"@"); if($6=="+" && length(a[1])>22) {PLUS5[$2]+=a[2]; PLUS3[$3-1]+=a[2]
+} else if($6=="-" && length(a[1])>22) {MINUS5[$3-1]+=a[2]; MINUS3[$2]+=a[2]
+}} END {for(var in PLUS5) print var,(PLUS5[var]-1)/TOTAL*1000000,"plus_5end""\n"var,(PLUS3[var]-1)/TOTAL*1000000,"plus_3end""\n"var,(MINUS5[var]-1)/TOTAL*1000000,"minus_5end""\n"var,(MINUS3[var]-1)/TOTAL*1000000,"minus_3end"
+}' > ${analysis}/${lib_sRNA}/${lib_sRNA}_${TE}_3MM_mappers.counts
+
+DIRECTORY_lib_sRNA="${analysis}/${lib_sRNA}"
+if [[ ${strand} == "-" ]]; then
+### if the cluster is on minus strand
+Rscript ${scripts}/phasing_linkage_minus.R DIRECTORY=${DIRECTORY_lib_sRNA} LIB=${lib_sRNA} TE=${TE}
+else
+### if the cluster is on plus strand
+Rscript ${scripts}/phasing_linkage_plus.R DIRECTORY=${DIRECTORY_lib_sRNA} LIB=${lib_sRNA} TE=${TE}
+fi
+done
+### phasing linkage analysis for Figure 6C and C' --- END ---
+
+
+### step 10: measuring nucleotide frequencies around 3' ends of piRNAs mapping to the ovarian somatic cluster of Tetragonula carbonaria for Figure 6
+### piRNAs from the plus and minus strands were separately analysed.
+printf "R2_1 810000 989500 R2_1_cluster . +""\n" | tr ' ' '\t' |\
+bedtools intersect -f 0.5 -s -wa -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mappers.Tcarb.CSA7p2.bed -b - |\
+awk '{split($4,a,"@"); split(a[2],b,":"); for(i=1;i<=b[1];i++) {if($3-$2>22) print $1,$3-5,$3+6,$4,$5,$6}}' | tr ' ' '\t' |\
+bedtools getfasta -s -fi ${fastafile} -tab -bed - | awk '{print ">"$1"\n"toupper($2)}' | tr 'T' 'U' >> ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_R2_1_S-piRNAs.3end_11nt_window.fasta
+
+printf "R2_1 810000 989500 R2_1_cluster . +""\n" | tr ' ' '\t' |\
+bedtools intersect -f 0.5 -S -wa -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mappers.Tcarb.CSA7p2.bed -b - |\
+awk '{split($4,a,"@"); split(a[2],b,":"); for(i=1;i<=b[1];i++) {if($3-$2>22) print $1,$2-6,$2+5,$4,$5,$6}}' | tr ' ' '\t' |\
+bedtools getfasta -s -fi ${fastafile} -tab -bed - | awk '{print ">"$1"\n"toupper($2)}' | tr 'T' 'U' >> ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_R2_1_AS-piRNAs.3end_11nt_window.fasta
+
+### running weblogo
+for TYPE in R2_1_S-piRNAs.3end_11nt_window R2_1_AS-piRNAs.3end_11nt_window; do
+weblogo -U probability -A rna -f ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_${TYPE}.fasta -F pdf -n 50 -c classic -o ${analysis}/${lib_sRNA}/${lib_sRNA}_${TYPE}.gt22_logo_prob.pdf
+weblogo -U probability -A rna -f ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_${TYPE}.fasta -F logodata -n 50 -c classic -s large -t ${lib_sRNA}"_VanRij" -o ${analysis}/${lib_sRNA}/${lib_sRNA}_${TYPE}.gt22_logo_prob.txt
+done
+
+### for revision --- END ---
