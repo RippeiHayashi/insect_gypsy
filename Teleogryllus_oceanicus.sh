@@ -362,5 +362,16 @@ fi
 done
 ### phasing linkage analysis for Figure 6C and C' --- END ---
 
+
+### step 10: measuring nucleotide frequencies around 3' ends of piRNAs mapping to the ovarian somatic clusters of Teleogryllus oceanicus for Figure 6
+bedtools intersect -f 0.5 -wa -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mappers.iqTelOcea1.bed -b ${references}/${SPECIES}/iqTelOcea1_piRNA-clusters.bed |\
+awk '{split($4,a,"@"); for(i=1;i<=a[2];i++) {if($3-$2>22 && $6=="+") print $1,$3-5,$3+6,$4,$5,$6; else if($3-$2>22 && $6=="-") print $1,$2-6,$2+5,$4,$5,$6}}' | tr ' ' '\t' |\
+bedtools getfasta -s -fi ${fastafile} -tab -bed - | awk '{print ">"$1"\n"toupper($2)}' | tr 'T' 'U' >> ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_cluster-piRNAs.3end_11nt_window.fasta
+
+### running weblogo
+TYPE="cluster-piRNAs.3end_21nt_window"
+weblogo -U probability -A rna -f ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_${TYPE}.fasta -F pdf -n 50 -c classic -o ${analysis}/${lib_sRNA}/${lib_sRNA}_${TYPE}.gt22_logo_prob.pdf
+weblogo -U probability -A rna -f ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_${TYPE}.fasta -F logodata -n 50 -c classic -s large -t ${lib_sRNA}"_VanRij" -o ${analysis}/${lib_sRNA}/${lib_sRNA}_${TYPE}.gt22_logo_prob.txt
+
 ### for revision --- END ---
 
