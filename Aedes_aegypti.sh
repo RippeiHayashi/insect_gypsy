@@ -277,6 +277,8 @@ weblogo -U probability -A rna -f ${analysis}/${lib_sRNA}/weblogo/${lib_sRNA}_${T
 
 
 ### step 8: measure in-trans ping-pong linkage --- START ---
+
+### focusing on VanRij_Aaeg_piRNA cluster piRNAs --- START ---
 ### step 8-1: extract g1g9, g2g10_revComp and last9 sequences from VanRij_Aaeg_piRNA-clusters piRNA
 mkdir -p ${analysis}/${lib_sRNA}/jellyfish
 bedtools intersect -wa -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mappers.AaegL5.0.bed \
@@ -310,6 +312,49 @@ done
 ### step 8-3: measure linkage using R
 CLASS="VanRij_Aaeg_piRNA-clusters"
 Rscript ${scripts}/jellyfish_linkage.R DIRECTORY="${analysis}" LIB=${lib_sRNA} CLASS=${CLASS}
+### focusing on VanRij_Aaeg_piRNA cluster piRNAs --- END ---
+
+
+### focusing on somatically enriched piRNAs for the revision --- START ---
+### ${analysis}/mosquitoes/Aedes_aegypti_soma-enriched-tiles.excluding_the_outlier.bed includes tiles whose coverage in the ovarian sRNAseq library was more than 10 times greater than that of the embryonic sRNAseq library in both replicates.
+### ${analysis}/mosquitoes/Aedes_aegypti_soma-enriched-tiles.excluding_the_outlier.bed excludes the tile NC_035109.1:351125500-351126000 that contains abundantly expressed ping-pong piRNAs.
+### step 8-4: extract g1g9, g2g10_revComp and last9 sequences from soma enriched piRNA
+mkdir -p ${analysis}/${lib_sRNA}/jellyfish/
+bedtools intersect -wa -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mappers.AaegL5.0.bed \
+-b ${analysis}/mosquitoes/Aedes_aegypti_soma-enriched-tiles.excluding_the_outlier.bed |\
+awk '{split($4,a,"@"); if(length(a[1])>22) for(i=1;i<=a[2];i++) print ">"$4":"i"\n"substr($4,1,9)
+}' > ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_soma-enriched_g1g9.fasta
+
+bedtools intersect -wa -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mappers.AaegL5.0.bed \
+-b ${analysis}/mosquitoes/Aedes_aegypti_soma-enriched-tiles.excluding_the_outlier.bed |\
+awk '{split($4,a,"@"); if(length(a[1])>22) for(i=1;i<=a[2];i++) print ">"$4":"i"\n"substr($4,2,9)
+}' | fastx_reverse_complement - > ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_soma-enriched_g2g10_revComp.fasta
+
+bedtools intersect -wa -s -a ${analysis}/${lib_sRNA}/${lib_sRNA}_genome-unique-mappers.AaegL5.0.bed \
+-b ${analysis}/mosquitoes/Aedes_aegypti_soma-enriched-tiles.excluding_the_outlier.bed |\
+awk '{split($4,a,"@"); if(length(a[1])>22) for(i=1;i<=a[2];i++) print ">"$4":"i"\n"substr(a[1],length(a[1])-8,9)
+}' > ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_soma-enriched_last9.fasta
+
+### step 8-5: count the occurrences of 9mers by jellyfish
+CLASS="soma-enriched"
+if [[ -f ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_all_m9_dump.tab ]]; then
+rm ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_all_m9_dump.tab
+fi
+for TYPE in g2g10_revComp g1g9 last9; do
+### jellyfish
+jellyfish count -m 9 -s 100M -t 10 -o ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_${TYPE}_m9 ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_${TYPE}.fasta
+jellyfish dump ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_${TYPE}_m9 > ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_${TYPE}_m9_dump.fa
+### collect all counts
+TOTAL=`(fasta_formatter -i ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_${TYPE}_m9_dump.fa -t | awk '{count+=$1} END {print count}')`
+### get rid of simple repeats
+fasta_formatter -i ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_${TYPE}_m9_dump.fa -t |\
+awk -v TYPE=${TYPE} -v TOTAL=${TOTAL} '{if($2!~"AAAAAA" && $2!~"CCCCCC" && $2!~"GGGGGG" && $2!~"TTTTTT") print $2,$1/TOTAL*1000,TYPE}' >> ${analysis}/${lib_sRNA}/jellyfish/${lib_sRNA}_${CLASS}_all_m9_dump.tab
+done
+
+### step 8-6: measure linkage using R
+CLASS="soma-enriched"
+Rscript /scratch/lf10/rh1772/fly_piRNAs/scripts/jellyfish_linkage_Dspp_RH.R DIRECTORY="${analysis}" LIB=${lib_sRNA} CLASS=${CLASS}
+### focusing on somatically enriched piRNAs for the revision --- END ---
 
 ### processing small RNA sequencing libraries --- common part per library END ---
 
